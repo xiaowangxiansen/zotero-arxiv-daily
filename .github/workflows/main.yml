@@ -32,6 +32,18 @@ jobs:
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # 本地 reranker 每次运行都要 new 一个 SentenceTransformer。不缓存的话每次都得从
+      # HuggingFace 重新下模型（几百 MB），这往往是整条链路最慢的一段。
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-jina-embeddings-v5-text-nano-retrieval
+          restore-keys: |
+            hf-${{ runner.os }}-
 
       # CUSTOM_CONFIG 的语义（旧 workflow 只支持「整段 YAML 正文」，一旦为空就会把
       # config/custom.yaml 清成 0 字节 → 主流程才报 MissingMandatoryValue: executor.source）：

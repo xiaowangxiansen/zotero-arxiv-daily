@@ -8,6 +8,7 @@ from .protocol import CorpusPaper
 from .archive import save_daily_papers
 from .zotero_push import ZoteroPusher
 import random
+import time
 from datetime import datetime
 from .reranker import get_reranker_cls
 from .construct_email import render_email
@@ -16,6 +17,15 @@ from openai import OpenAI
 from tqdm import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def timed(label: str, fn):
+    """跑 fn 并把耗时打进日志，用于定位整条链路卡在哪一段。"""
+    started = time.perf_counter()
+    try:
+        return fn()
+    finally:
+        logger.info(f"[timing] {label}: {time.perf_counter() - started:.1f}s")
 
 
 def normalize_path_patterns(patterns: list[str] | ListConfig | None, config_key: str) -> list[str] | None:
@@ -102,8 +112,8 @@ class Executor:
 
     
     def run(self):
-        corpus = self.fetch_zotero_corpus()
-        corpus = self.filter_corpus(corpus)
+        corpus = timed("fetch zotero corpus", self.fetch_zotero_corpus)
+        corpus = timed("filter corpus", lambda: self.filter_corpus(corpus))
         if len(corpus) == 0:
             if not self.config.executor.get("allow_empty_corpus", False):
                 logger.error(f"No zotero papers found. Please check your zotero settings:\n{self.config.zotero}")
@@ -115,7 +125,7 @@ class Executor:
         all_papers = []
         for source, retriever in self.retrievers.items():
             logger.info(f"Retrieving {source} papers...")
-            papers = retriever.retrieve_papers()
+            papers = timed(f"retrieve {source}", retriever.retrieve_papers)
             if len(papers) == 0:
                 logger.info(f"No {source} papers found")
                 continue
@@ -126,7 +136,10 @@ class Executor:
         if len(all_papers) > 0:
             if len(corpus) > 0:
                 logger.info("Reranking papers...")
-                reranked_papers = self.reranker.rerank(all_papers, corpus)
+                reranked_papers = timed(
+                    f"rerank {len(all_papers)}x{len(corpus)}",
+                    lambda: self.reranker.rerank(all_papers, corpus),
+                )
             else:
                 reranked_papers = list(all_papers)
             reranked_papers = reranked_papers[:self.config.executor.max_paper_num]
@@ -141,11 +154,11 @@ class Executor:
             logger.info("No new papers found. No email will be sent.")
             return
         if reranked_papers:
-            self.archive_papers(reranked_papers)
-            self.push_to_zotero(reranked_papers)
+            timed("archive", lambda: self.archive_papers(reranked_papers))
+            timed("zotero push", lambda: self.push_to_zotero(reranked_papers))
         logger.info("Sending email...")
-        email_content = render_email(reranked_papers)
-        send_email(self.config, email_content)
+        email_content = timed("render email", lambda: render_email(reranked_papers))
+        timed("send email", lambda: send_email(self.config, email_content))
         logger.info("Email sent successfully")
 
     def archive_papers(self, papers: list) -> None:
