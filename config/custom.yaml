@@ -33,6 +33,8 @@ source:
 executor:
   debug: ${oc.env:DEBUG,null}
   source: ['arxiv']
-  # Zotero 库还是空的：没有参考论文就跳个性化排序，按 arXiv 抓取顺序照发，
-  # 先把「抓取 -> 重排 -> 发信」整条链路跑通。库里攒够论文后建议改回 false。
+  # 每天最终只保留 30 篇：邮件正文、papers/ 归档、Zotero 推送共用这一份列表。
+  # 抓取量远大于此（4 个方向一天 400+ 篇），超出的直接丢掉，不进归档也不进 Zotero。
+  max_paper_num: 30
+  # 库为空时仍按抓取顺序照发（不跑个性化排序）。当前库已有论文，留着只是兜底。
   allow_empty_corpus: true
