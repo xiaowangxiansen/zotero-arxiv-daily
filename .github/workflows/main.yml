@@ -65,3 +65,13 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
         run: uv run src/zotero_arxiv_daily/main.py
+
+      # 当天论文按日期落在 papers/<YYYY-MM-DD>/，不进仓库，作为 artifact 供下载（保留 30 天）
+      - name: Upload papers archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: papers-${{ github.run_id }}
+          path: papers/
+          if-no-files-found: ignore
+          retention-days: 30

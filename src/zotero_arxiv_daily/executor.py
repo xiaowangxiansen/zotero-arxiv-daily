@@ -1,9 +1,11 @@
 from loguru import logger
 from pyzotero import zotero
 from omegaconf import DictConfig, ListConfig
+from pathlib import Path
 from .utils import glob_match
 from .retriever import get_retriever_cls
 from .protocol import CorpusPaper
+from .archive import save_daily_papers
 import random
 from datetime import datetime
 from .reranker import get_reranker_cls
@@ -11,6 +13,8 @@ from .construct_email import render_email
 from .utils import send_email
 from openai import OpenAI
 from tqdm import tqdm
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def normalize_path_patterns(patterns: list[str] | ListConfig | None, config_key: str) -> list[str] | None:
@@ -135,7 +139,24 @@ class Executor:
         elif not self.config.executor.send_empty:
             logger.info("No new papers found. No email will be sent.")
             return
+        if reranked_papers:
+            self.archive_papers(reranked_papers)
         logger.info("Sending email...")
         email_content = render_email(reranked_papers)
         send_email(self.config, email_content)
         logger.info("Email sent successfully")
+
+    def archive_papers(self, papers: list) -> None:
+        """把当天论文按日期落到 executor.archive_dir（默认 papers/），失败不影响发信。"""
+        archive_dir = str(self.config.executor.get("archive_dir", "") or "").strip()
+        if not archive_dir:
+            return
+        root = Path(archive_dir)
+        if not root.is_absolute():
+            root = REPO_ROOT / root
+        offset = int(self.config.executor.get("archive_timezone_offset", 8))
+        try:
+            out_dir = save_daily_papers(papers, root, offset)
+            logger.info(f"Archived {len(papers)} papers to {out_dir}")
+        except Exception as exc:
+            logger.warning(f"Failed to archive papers to {root}: {exc}")

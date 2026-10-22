@@ -52,5 +52,7 @@ executor:
   send_empty: false # Whether to send an empty email even if no new papers today. Example: true
   allow_empty_corpus: false # Whether to still send papers when the Zotero library is empty (skips personalized ranking). Example: true
   max_paper_num: 100 # The maximum number of the papers presented in the email. Example: 100
+  archive_dir: papers # Directory (relative to repo root) that receives <YYYY-MM-DD>/papers.md|json. Empty to disable. Example: papers
+  archive_timezone_offset: 8 # Hour offset used for the date-named folder. Example: 8 for UTC+8
   source: ??? # The sources of papers to retrieve. Example: ['arxiv','biorxiv','medrxiv','chemrxiv']
   reranker: local # The reranker to use. Example: 'local' or 'api'
