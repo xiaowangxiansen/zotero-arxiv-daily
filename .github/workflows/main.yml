@@ -41,7 +41,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-jina-embeddings-v5-text-nano-retrieval
+          key: hf-${{ runner.os }}-bge-small-en-v1.5
           restore-keys: |
             hf-${{ runner.os }}-
 

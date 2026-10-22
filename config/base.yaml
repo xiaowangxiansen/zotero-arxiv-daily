@@ -40,12 +40,17 @@ llm:
 
 reranker:
   local:
-    model: jinaai/jina-embeddings-v5-text-nano-retrieval # The Hugging Face model name of the local embedding model. Example: jinaai/jina-embeddings-v5-text-nano
-    max_seq_length: 512 # Token cap for abstracts. The model's own default is far larger, which pads every abstract to that length and makes CPU encoding ~15x slower. Example: 256
+    # 换掉了 jinaai/jina-embeddings-v5-text-nano-retrieval：它是 LLM 式 tokenizer
+    # （model_max_length=1e30），自定义 encode 不认 max_seq_length，每篇固定按 8192
+    # token 算，实测 410 篇要 992~1661s，整次 Action 22~35 分钟。
+    # bge-small 是标准 33M 模型，自带 512 截断，CPU 上快两个数量级。
+    # 想换回 jina，把 model 改回 jinaai/jina-embeddings-v5-text-nano-retrieval，
+    # encode_kwargs 换成 task: retrieval / prompt_name: document。
+    model: BAAI/bge-small-en-v1.5 # The Hugging Face model name of the local embedding model. Example: sentence-transformers/all-MiniLM-L6-v2
+    max_seq_length: 512 # Token cap for abstracts. Example: 256
     encode_kwargs:
     # The kwargs for the encode method of the local embedding model. Details see [here](https://www.sbert.net/docs/package_reference/SentenceTransformer.html#sentence_transformers.SentenceTransformer.encode)
-      task: retrieval
-      prompt_name: document
+      batch_size: 64
   api:
     key: null # API Key of your embedding model API. Example: sk-xxx
     base_url: null # API URL of your embedding model API. Example: https://api.openai.com/v1
