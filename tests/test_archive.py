@@ -1,45 +1,55 @@
-"""Tests for zotero_arxiv_daily.archive: 按日期落盘。"""
+"""Tests for zotero_arxiv_daily.archive: 按日期 + 方向落盘。"""
 
 import json
 from datetime import datetime, timedelta, timezone
 
 from tests.canned_responses import make_sample_paper
-from zotero_arxiv_daily.archive import current_day, save_daily_papers
+from zotero_arxiv_daily.archive import category_of, current_day, save_daily_papers
 
 
 def test_current_day_uses_requested_offset():
-    # +8 与 UTC 同一天时，两个偏移应该给出同一个日期；差 8 小时的时刻则应不同
     now_utc = datetime.now(timezone.utc)
     assert current_day(0) == now_utc.strftime("%Y-%m-%d")
     assert current_day(8) == (now_utc + timedelta(hours=8)).strftime("%Y-%m-%d")
 
 
-def test_save_daily_papers_creates_dated_dir(tmp_path):
+def test_category_of_prefers_primary_then_first_then_other():
+    assert category_of(make_sample_paper(primary_category="cs.CV", categories=["cs.CV", "cs.AI"])) == "cs.CV"
+    assert category_of(make_sample_paper(primary_category=None, categories=["cs.LG"])) == "cs.LG"
+    assert category_of(make_sample_paper(primary_category=None, categories=[])) == "other"
+
+
+def test_save_groups_papers_into_category_subdirs(tmp_path):
     papers = [
-        make_sample_paper(title="Paper A", score=7.5, tldr="TLDR A", affiliations=["MIT"]),
-        make_sample_paper(title="Paper B", score=None, tldr=None, abstract="Abstract B"),
+        make_sample_paper(title="AI Paper 1", primary_category="cs.AI", score=7.5, tldr="TLDR AI"),
+        make_sample_paper(title="AI Paper 2", primary_category="cs.AI"),
+        make_sample_paper(title="CV Paper", primary_category="cs.CV"),
     ]
 
     out_dir = save_daily_papers(papers, tmp_path, offset_hours=8)
 
     assert out_dir == tmp_path / current_day(8)
-    assert (out_dir / "papers.md").is_file()
-    assert (out_dir / "papers.json").is_file()
+    assert (out_dir / "index.md").is_file()
 
-    md = (out_dir / "papers.md").read_text(encoding="utf-8")
-    assert "Paper A" in md and "Paper B" in md
-    assert "TLDR A" in md
-    assert "Abstract B" in md
-    assert "N/A" in md  # 没有 score 的论文
+    ai_md = (out_dir / "cs.AI" / "papers.md").read_text(encoding="utf-8")
+    assert "AI Paper 1" in ai_md and "AI Paper 2" in ai_md
+    assert "CV Paper" not in ai_md
+    assert "TLDR AI" in ai_md
 
-    data = json.loads((out_dir / "papers.json").read_text(encoding="utf-8"))
-    assert data["date"] == current_day(8)
-    assert data["count"] == 2
-    assert [p["title"] for p in data["papers"]] == ["Paper A", "Paper B"]
-    assert data["papers"][0]["tldr"] == "TLDR A"
+    cv_md = (out_dir / "cs.CV" / "papers.md").read_text(encoding="utf-8")
+    assert "CV Paper" in cv_md
+
+    ai_json = json.loads((out_dir / "cs.AI" / "papers.json").read_text(encoding="utf-8"))
+    assert ai_json["category"] == "cs.AI"
+    assert ai_json["count"] == 2
+    assert [p["title"] for p in ai_json["papers"]] == ["AI Paper 1", "AI Paper 2"]
+
+    index = (out_dir / "index.md").read_text(encoding="utf-8")
+    assert "| cs.AI | 2 |" in index
+    assert "| cs.CV | 1 |" in index
 
 
-def test_save_daily_papers_handles_empty_list(tmp_path):
+def test_save_handles_empty_list(tmp_path):
     out_dir = save_daily_papers([], tmp_path)
-    assert (out_dir / "papers.md").is_file()
-    assert json.loads((out_dir / "papers.json").read_text(encoding="utf-8"))["count"] == 0
+    index = (out_dir / "index.md").read_text(encoding="utf-8")
+    assert "共 0 篇" in index
