@@ -6,6 +6,7 @@ from .utils import glob_match
 from .retriever import get_retriever_cls
 from .protocol import CorpusPaper
 from .archive import save_daily_papers
+from .zotero_push import ZoteroPusher
 import random
 from datetime import datetime
 from .reranker import get_reranker_cls
@@ -141,6 +142,7 @@ class Executor:
             return
         if reranked_papers:
             self.archive_papers(reranked_papers)
+            self.push_to_zotero(reranked_papers)
         logger.info("Sending email...")
         email_content = render_email(reranked_papers)
         send_email(self.config, email_content)
@@ -160,3 +162,13 @@ class Executor:
             logger.info(f"Archived {len(papers)} papers to {out_dir}")
         except Exception as exc:
             logger.warning(f"Failed to archive papers to {root}: {exc}")
+
+    def push_to_zotero(self, papers: list) -> None:
+        """把当天论文写进 Zotero 分类（需要 key 有写权限），失败不影响发信。"""
+        push_conf = self.config.zotero.get("push") or {}
+        if not bool(push_conf.get("enabled", False)):
+            return
+        try:
+            ZoteroPusher(self.config).push(papers)
+        except Exception as exc:
+            logger.warning(f"Failed to push papers to zotero: {exc}")

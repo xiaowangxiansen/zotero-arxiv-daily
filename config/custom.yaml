@@ -2,6 +2,11 @@ zotero:
   user_id: ${oc.env:ZOTERO_ID}
   api_key: ${oc.env:ZOTERO_KEY}
   include_path: null # Or set a list of glob patterns, e.g. ["2026/survey/**","2026/reading-group/**"]
+  # 把当天论文写回 Zotero：父分类 arXiv Daily，子分类按日期（2026-10-22）
+  push:
+    enabled: true
+    parent_collection: arXiv Daily
+    collection_name: "{date}"
 
 email:
   sender: ${oc.env:SENDER}

@@ -3,6 +3,10 @@ zotero:
   api_key: ??? # An Zotero API key with read access.
   include_path: null # A list of glob patterns marking the Zotero collections that should be included. Example: ["2026/survey/**","2026/reading-group/**"]
   ignore_path: null # A list of glob patterns marking the Zotero collections that should be excluded. Example: ["2026/ignore/**","archive/**"]
+  push:
+    enabled: false # Whether to create today's papers as Zotero items. Requires an API key with write access. Example: true
+    parent_collection: arXiv Daily # Parent collection; the dated child collection is created under it. Example: arXiv Daily
+    collection_name: "{date}" # Child collection name template, {date} is YYYY-MM-DD. Example: "{date}"
 
 source:
   arxiv:
