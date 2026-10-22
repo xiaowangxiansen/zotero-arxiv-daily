@@ -1,0 +1,24 @@
+name: Diag2
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Zotero key permissions
+        env:
+          ZOTERO_ID: ${{ secrets.ZOTERO_ID }}
+          ZOTERO_KEY: ${{ secrets.ZOTERO_KEY }}
+        run: |
+          curl -s -H "Zotero-API-Version: 3" -H "Authorization: Bearer $ZOTERO_KEY" \
+            https://api.zotero.org/keys/current | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('userID :', d.get('userID'))
+print('username:', d.get('username'))
+acc=d.get('access') or {}
+print('user access   :', acc.get('user'))
+print('groups access :', acc.get('groups'))
+print('可写 user 库  :', bool((acc.get('user') or {}).get('write')))
+"
