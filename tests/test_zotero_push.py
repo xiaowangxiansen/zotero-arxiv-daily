@@ -9,12 +9,13 @@ from zotero_arxiv_daily.zotero_push import ZoteroPusher, paper_to_item, split_na
 
 
 class FakeZotero:
-    """够用的假 client：记录创建了什么。"""
+    """够用的假 client：记录创建了什么，并复刻「单次最多 50 条」的限制。"""
 
     def __init__(self, existing_collections=None):
         self.collections_data = list(existing_collections or [])
         self.created_collections = []
         self.created_items = []
+        self.items_by_collection = {}
         self._seq = 0
 
     def everything(self, generator):
@@ -22,6 +23,9 @@ class FakeZotero:
 
     def collections(self):
         return self.collections_data
+
+    def collection_items(self, key):
+        return self.items_by_collection.get(key, [])
 
     def create_collections(self, payloads):
         success = {}
@@ -34,7 +38,11 @@ class FakeZotero:
         return {"success": success}
 
     def create_items(self, items):
+        if len(items) > 50:
+            raise ValueError("You may only create up to 50 items per call")
         self.created_items.extend(items)
+        for item in items:
+            self.items_by_collection.setdefault(item["collections"][0], []).append({"data": item})
         return {"success": {str(i): f"ITEM{i}" for i in range(len(items))}, "failed": {}}
 
 
@@ -90,6 +98,31 @@ def test_push_skips_parent_when_name_empty():
     pusher.push([make_sample_paper(title="A")])
 
     assert [c["name"] for c in client.created_collections] == [_today()]
+
+
+def test_push_batches_over_50_items():
+    """Zotero 单次最多 50 条：120 篇必须分成 3 批，不能一次传。"""
+    client = FakeZotero()
+    papers = [
+        make_sample_paper(title=f"P{i}", url=f"https://arxiv.org/abs/2410.{i:05d}")
+        for i in range(120)
+    ]
+
+    created = ZoteroPusher(_config(), client=client).push(papers)
+
+    assert created == 120
+    assert len(client.created_items) == 120
+
+
+def test_push_skips_papers_already_in_collection():
+    """同一天重跑不能重复写入。"""
+    client = FakeZotero()
+    pusher = ZoteroPusher(_config(), client=client)
+    papers = [make_sample_paper(title="A", url="https://arxiv.org/abs/2410.99999")]
+
+    assert pusher.push(papers) == 1
+    assert pusher.push(papers) == 0
+    assert len(client.created_items) == 1
 
 
 def test_paper_to_item_fields():

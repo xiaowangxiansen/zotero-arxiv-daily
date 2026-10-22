@@ -14,6 +14,16 @@ from typing import Iterable
 from loguru import logger
 
 TAG = "auto-arxiv-daily"
+BATCH_SIZE = 50  # Zotero API 单次最多创建 50 条，pyzotero 不会自动分块
+
+
+def _archive_id(paper) -> str:
+    return (getattr(paper, "url", "") or "").rstrip("/").rsplit("/", 1)[-1]
+
+
+def _chunks(seq: list, size: int = BATCH_SIZE):
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
 
 
 def _extract_key(resp) -> str | None:
@@ -44,7 +54,7 @@ def split_name(full_name: str) -> dict:
 
 
 def paper_to_item(paper, collection_key: str) -> dict:
-    archive_id = (paper.url or "").rstrip("/").rsplit("/", 1)[-1]
+    archive_id = _archive_id(paper)
     item = {
         "itemType": "preprint",
         "title": paper.title,
@@ -97,6 +107,22 @@ class ZoteroPusher:
         logger.info(f"Created zotero collection {name!r} ({key})")
         return key
 
+    def _existing_keys(self, collection_key: str) -> set[str]:
+        """当天分类里已有的条目（用 archiveID / url 判定），避免同一天重跑时重复写入。"""
+        try:
+            items = self.client.everything(self.client.collection_items(collection_key))
+        except Exception as exc:
+            logger.warning(f"Failed to read existing items of collection {collection_key}: {exc}")
+            return set()
+        seen = set()
+        for item in items:
+            data = item.get("data", {})
+            if data.get("archiveID"):
+                seen.add(str(data["archiveID"]))
+            if data.get("url"):
+                seen.add(str(data["url"]).rstrip("/"))
+        return seen
+
     def push(self, papers: Iterable) -> int:
         papers = list(papers)
         if not papers:
@@ -113,12 +139,23 @@ class ZoteroPusher:
         collection_name = template.format(date=day, source="arxiv")
         collection_key = self.ensure_collection(collection_name, parent_key)
 
-        # pyzotero 的 create_items 会自动按 50 条分块
-        resp = self.client.create_items([paper_to_item(p, collection_key) for p in papers]) or {}
-        bucket = resp.get("success") or resp.get("successful") or {}
-        failed = resp.get("failed") or {}
-        created = len(bucket) if bucket else len(papers) - len(failed)
-        if failed:
-            logger.warning(f"Zotero rejected {len(failed)} item(s): {list(failed.values())[:3]}")
+        seen = self._existing_keys(collection_key)
+        fresh = [p for p in papers if _archive_id(p) not in seen and (p.url or "").rstrip("/") not in seen]
+        skipped = len(papers) - len(fresh)
+        if skipped:
+            logger.info(f"Skipped {skipped} paper(s) already present in collection {collection_name!r}")
+
+        created = 0
+        for batch in _chunks(fresh):
+            try:
+                resp = self.client.create_items([paper_to_item(p, collection_key) for p in batch]) or {}
+            except Exception as exc:
+                logger.warning(f"Failed to create a batch of {len(batch)} zotero items: {exc}")
+                continue
+            failed = resp.get("failed") or {}
+            if failed:
+                logger.warning(f"Zotero rejected {len(failed)} item(s): {list(failed.values())[:3]}")
+            created += len(batch) - len(failed)
+
         logger.info(f"Pushed {created} papers to zotero collection {collection_name!r} ({collection_key})")
         return created
