@@ -63,7 +63,7 @@ def _today(offset=8):
     return datetime.now(timezone(timedelta(hours=offset))).strftime("%Y-%m-%d")
 
 
-def test_push_creates_parent_and_dated_child():
+def test_push_creates_parent_dated_and_category_children():
     client = FakeZotero()
     pusher = ZoteroPusher(_config(), client=client)
 
@@ -71,9 +71,30 @@ def test_push_creates_parent_and_dated_child():
 
     assert created == 1
     names = [c["name"] for c in client.created_collections]
-    assert names == ["arXiv Daily", _today()]
+    # 父分类 -> 日期分类 -> 方向分类（样本论文没有 primary_category，兜底 other）
+    assert names == ["arXiv Daily", _today(), "other"]
     assert client.created_collections[1]["parentCollection"] == "COL1"
-    assert client.created_items[0]["collections"] == ["COL2"]
+    assert client.created_collections[2]["parentCollection"] == "COL2"
+    # 条目同时挂在日期和方向两个分类下
+    assert client.created_items[0]["collections"] == ["COL2", "COL3"]
+
+
+def test_push_puts_each_paper_into_its_own_category():
+    client = FakeZotero()
+    papers = [
+        make_sample_paper(title="AI", url="https://arxiv.org/abs/2410.00001", primary_category="cs.AI"),
+        make_sample_paper(title="CV", url="https://arxiv.org/abs/2410.00002", primary_category="cs.CV"),
+        make_sample_paper(title="AI2", url="https://arxiv.org/abs/2410.00003", primary_category="cs.AI"),
+    ]
+
+    ZoteroPusher(_config(), client=client).push(papers)
+
+    created = {c["name"]: c for c in client.created_collections}
+    assert set(created) == {"arXiv Daily", _today(), "cs.AI", "cs.CV"}
+    by_title = {item["title"]: item["collections"] for item in client.created_items}
+    assert by_title["AI"] == ["COL2", created["cs.AI"]["key"]]
+    assert by_title["AI2"] == ["COL2", created["cs.AI"]["key"]]
+    assert by_title["CV"] == ["COL2", created["cs.CV"]["key"]]
 
 
 def test_push_reuses_existing_collections():
@@ -81,6 +102,7 @@ def test_push_reuses_existing_collections():
         existing_collections=[
             {"key": "P1", "data": {"name": "arXiv Daily", "parentCollection": False}},
             {"key": "C1", "data": {"name": _today(), "parentCollection": "P1"}},
+            {"key": "S1", "data": {"name": "other", "parentCollection": "C1"}},
         ]
     )
     pusher = ZoteroPusher(_config(), client=client)
@@ -88,7 +110,7 @@ def test_push_reuses_existing_collections():
     pusher.push([make_sample_paper(title="A")])
 
     assert client.created_collections == []  # 一个都没新建
-    assert client.created_items[0]["collections"] == ["C1"]
+    assert client.created_items[0]["collections"] == ["C1", "S1"]
 
 
 def test_push_skips_parent_when_name_empty():
@@ -97,7 +119,7 @@ def test_push_skips_parent_when_name_empty():
 
     pusher.push([make_sample_paper(title="A")])
 
-    assert [c["name"] for c in client.created_collections] == [_today()]
+    assert [c["name"] for c in client.created_collections] == [_today(), "other"]
 
 
 def test_push_batches_over_50_items():

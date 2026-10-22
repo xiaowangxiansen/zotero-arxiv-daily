@@ -1,8 +1,9 @@
 """把当天论文写进 Zotero：建（或复用）分类，然后批量创建条目。
 
 设计要点：
-- 分类名用模板（默认 "{date}"），挂在父分类下，于是每天一个子分类；
-- 父分类/子分类都按名字查找，已存在就复用，不会重复建；
+- 分类层级：<父分类>/<日期>/<方向>，例如 arXiv Daily/2026-10-22/cs.AI；
+- 条目同时属于「日期」和「方向」两个分类，日期目录仍能看到当天全部论文；
+- 父分类/日期/方向都按名字查找，已存在就复用，不会重复建；
 - 单个条目失败只告警，不影响整批和发信；
 - 客户端可注入，便于测试时用假 client。
 """
@@ -13,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 from loguru import logger
+
+from .archive import category_of
 
 TAG = "auto-arxiv-daily"
 # Zotero 单次最多创建 50 条；但一次 50 条容易把响应拖到超时，25 条更稳
@@ -51,7 +54,10 @@ def split_name(full_name: str) -> dict:
     return {"creatorType": "author", "firstName": " ".join(parts[:-1]), "lastName": parts[-1]}
 
 
-def paper_to_item(paper, collection_key: str) -> dict:
+def paper_to_item(paper, collection_keys: str | list[str]) -> dict:
+    """collection_keys 传单个 key 或一组 key：一组时条目同时属于日期分类和方向分类。"""
+    if isinstance(collection_keys, str):
+        collection_keys = [collection_keys]
     archive_id = _archive_id(paper)
     item = {
         "itemType": "preprint",
@@ -61,7 +67,7 @@ def paper_to_item(paper, collection_key: str) -> dict:
         "url": paper.url,
         "repository": "arXiv",
         "archiveID": archive_id,
-        "collections": [collection_key],
+        "collections": list(collection_keys),
         "tags": [{"tag": TAG}, {"tag": paper.source}] if paper.source else [{"tag": TAG}],
     }
     if paper.pdf_url:
@@ -143,12 +149,25 @@ class ZoteroPusher:
         if skipped:
             logger.info(f"Skipped {skipped} paper(s) already present in collection {collection_name!r}")
 
+        # 日期分类下再按方向建一层：条目同时属于「日期」和「方向」，日期目录仍能看到全部。
+        # 只给真要写入的论文建分类，全被跳过时不产生空分类。
+        category_keys: dict[str, str] = {}
+
+        def build_items(batch):
+            items = []
+            for paper in batch:
+                category = category_of(paper)
+                if category not in category_keys:
+                    category_keys[category] = self.ensure_collection(category, collection_key)
+                items.append(paper_to_item(paper, [collection_key, category_keys[category]]))
+            return items
+
         created = 0
         attempts = 0
         while queue and attempts < MAX_ATTEMPTS:
             batch = queue[:BATCH_SIZE]
             try:
-                resp = self.client.create_items([paper_to_item(p, collection_key) for p in batch]) or {}
+                resp = self.client.create_items(build_items(batch)) or {}
             except Exception as exc:
                 # 超时可能已经在服务端写成功：重读分类去重后再续传，避免重复条目
                 attempts += 1
@@ -168,5 +187,8 @@ class ZoteroPusher:
         if queue:
             logger.warning(f"{len(queue)} paper(s) were not pushed after {MAX_ATTEMPTS} attempts")
 
+        if category_keys:
+            summary = ", ".join(f"{name}({len([p for p in papers if category_of(p) == name])})" for name in category_keys)
+            logger.info(f"Zotero category sub-collections under {collection_name!r}: {summary}")
         logger.info(f"Pushed {created} papers to zotero collection {collection_name!r} ({collection_key})")
         return created

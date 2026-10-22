@@ -1,0 +1,34 @@
+name: Migrate zotero categories
+
+# 一次性迁移用：把某个日期分类下的存量条目按 arXiv 主分类放进方向子分类。
+# 跑完即可删除本文件。
+on:
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: '要迁移的日期分类，格式 YYYY-MM-DD'
+        required: true
+        default: '2026-10-22'
+      dry_run:
+        description: '1 = 只打印计划不写入'
+        required: false
+        default: '1'
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Migrate categories
+        env:
+          ZOTERO_ID: ${{ secrets.ZOTERO_ID }}
+          ZOTERO_KEY: ${{ secrets.ZOTERO_KEY }}
+          TARGET_DATE: ${{ inputs.target_date }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: uv run python .github/scripts/migrate_zotero_categories.py
