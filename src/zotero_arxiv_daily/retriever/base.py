@@ -33,7 +33,9 @@ class BaseRetriever(ABC):
                 continue
             if paper is not None:
                 papers.append(paper)
-            sleep(1)
+            # 这个 sleep 是为了给「逐篇抓全文」限速；关掉 LLM 时不抓全文，就没必要空等
+            if self.config.llm.get("enabled", True):
+                sleep(1)
         return papers
 
 registered_retrievers = {}
