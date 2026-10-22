@@ -124,25 +124,24 @@ def main() -> int:
         sub_key = ensure_collection(client, category, date_key)
         payload = []
         for item in group:
-            data = dict(item["data"])
+            data = item["data"]
             keys = list(data.get("collections") or [])
             if sub_key not in keys:
                 keys.append(sub_key)
             if date_key not in keys:
                 keys.append(date_key)
             data["collections"] = keys
-            payload.append({"key": item["key"], "version": item["version"], "data": data})
+            # 原样交回（links/library/version/meta/key/data 六个键）：
+            # pyzotero 的 check_items 只对这种完整形态自动解包，平铺或 {"data":...} 都会报 Invalid keys
+            payload.append(item)
         for start in range(0, len(payload), BATCH):
             chunk = payload[start : start + BATCH]
             try:
-                resp = client.update_items(chunk) or {}
+                client.update_items(chunk)
             except Exception as exc:
                 logger.warning(f"update failed for {len(chunk)} item(s) in {category!r}: {exc}")
                 continue
-            failed = resp.get("failed") or {}
-            if failed:
-                logger.warning(f"{category!r}: Zotero rejected {len(failed)} item(s): {list(failed.values())[:2]}")
-            updated += len(chunk) - len(failed)
+            updated += len(chunk)
             logger.info(f"{category!r}: updated {updated} so far")
             time.sleep(1)
 
