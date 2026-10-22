@@ -146,6 +146,15 @@ def main() -> int:
             time.sleep(1)
 
     logger.info(f"Done. {updated}/{len(items)} item(s) now carry a category sub-collection")
+
+    # 核验：直接数每个方向子分类里实际有多少条目
+    children = [
+        c for c in client.everything(client.collections())
+        if (c.get("data", {}).get("parentCollection") or None) == date_key
+    ]
+    for child in sorted(children, key=lambda c: c["data"]["name"]):
+        name = child["data"]["name"]
+        logger.info(f"verify: {name} has {client.num_collectionitems(child['key'])} item(s)")
     return 0
 
 
