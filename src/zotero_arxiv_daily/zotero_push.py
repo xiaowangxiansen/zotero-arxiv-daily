@@ -8,22 +8,20 @@
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 from loguru import logger
 
 TAG = "auto-arxiv-daily"
-BATCH_SIZE = 50  # Zotero API 单次最多创建 50 条，pyzotero 不会自动分块
+# Zotero 单次最多创建 50 条；但一次 50 条容易把响应拖到超时，25 条更稳
+BATCH_SIZE = 25
+MAX_ATTEMPTS = 3
 
 
 def _archive_id(paper) -> str:
     return (getattr(paper, "url", "") or "").rstrip("/").rsplit("/", 1)[-1]
-
-
-def _chunks(seq: list, size: int = BATCH_SIZE):
-    for i in range(0, len(seq), size):
-        yield seq[i : i + size]
 
 
 def _extract_key(resp) -> str | None:
@@ -140,22 +138,35 @@ class ZoteroPusher:
         collection_key = self.ensure_collection(collection_name, parent_key)
 
         seen = self._existing_keys(collection_key)
-        fresh = [p for p in papers if _archive_id(p) not in seen and (p.url or "").rstrip("/") not in seen]
-        skipped = len(papers) - len(fresh)
+        queue = [p for p in papers if _archive_id(p) not in seen and (p.url or "").rstrip("/") not in seen]
+        skipped = len(papers) - len(queue)
         if skipped:
             logger.info(f"Skipped {skipped} paper(s) already present in collection {collection_name!r}")
 
         created = 0
-        for batch in _chunks(fresh):
+        attempts = 0
+        while queue and attempts < MAX_ATTEMPTS:
+            batch = queue[:BATCH_SIZE]
             try:
                 resp = self.client.create_items([paper_to_item(p, collection_key) for p in batch]) or {}
             except Exception as exc:
-                logger.warning(f"Failed to create a batch of {len(batch)} zotero items: {exc}")
+                # 超时可能已经在服务端写成功：重读分类去重后再续传，避免重复条目
+                attempts += 1
+                logger.warning(f"Batch of {len(batch)} failed ({exc}); re-reading collection and retrying ({attempts}/{MAX_ATTEMPTS})")
+                seen |= self._existing_keys(collection_key)
+                queue = [p for p in queue if _archive_id(p) not in seen and (p.url or "").rstrip("/") not in seen]
+                if attempts < MAX_ATTEMPTS:
+                    time.sleep(3 * attempts)
                 continue
+            attempts = 0
             failed = resp.get("failed") or {}
             if failed:
                 logger.warning(f"Zotero rejected {len(failed)} item(s): {list(failed.values())[:3]}")
             created += len(batch) - len(failed)
+            queue = queue[BATCH_SIZE:]
+
+        if queue:
+            logger.warning(f"{len(queue)} paper(s) were not pushed after {MAX_ATTEMPTS} attempts")
 
         logger.info(f"Pushed {created} papers to zotero collection {collection_name!r} ({collection_key})")
         return created
