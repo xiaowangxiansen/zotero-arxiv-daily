@@ -265,6 +265,89 @@ def test_run_with_llm_disabled_skips_llm(config, monkeypatch):
     assert "TLDR:" not in html
 
 
+def test_run_with_empty_zotero_corpus_sends_when_allowed(config, monkeypatch):
+    """库为空 + allow_empty_corpus=true：跳个性化排序，仍按抓取顺序发信。"""
+    import email as email_lib
+    import smtplib
+
+    from omegaconf import open_dict
+
+    from tests.canned_responses import (
+        make_sample_paper,
+        make_stub_openai_client,
+        make_stub_smtp,
+        make_stub_zotero_client,
+    )
+
+    with open_dict(config):
+        config.executor.source = ["arxiv"]
+        config.executor.reranker = "api"
+        config.executor.allow_empty_corpus = True
+        config.executor.send_empty = False
+
+    monkeypatch.setattr(
+        "zotero_arxiv_daily.executor.zotero.Zotero", lambda *a, **kw: make_stub_zotero_client(items=[])
+    )
+    monkeypatch.setattr("zotero_arxiv_daily.executor.OpenAI", lambda **kw: make_stub_openai_client())
+    monkeypatch.setattr("zotero_arxiv_daily.reranker.api.OpenAI", lambda **kw: make_stub_openai_client())
+
+    import zotero_arxiv_daily.retriever.arxiv_retriever  # noqa: F401
+
+    from zotero_arxiv_daily.retriever.base import registered_retrievers
+
+    monkeypatch.setattr(
+        registered_retrievers["arxiv"],
+        "retrieve_papers",
+        lambda self: [make_sample_paper(title="No Corpus Paper")],
+    )
+
+    sent = []
+    monkeypatch.setattr(smtplib, "SMTP", make_stub_smtp(sent))
+    monkeypatch.setattr("zotero_arxiv_daily.retriever.base.sleep", lambda _: None)
+
+    Executor(config).run()
+
+    assert len(sent) == 1, "库为空但开关打开时，邮件仍应发出"
+    html = email_lib.message_from_string(sent[0][2]).get_payload(decode=True).decode("utf-8")
+    assert "No Corpus Paper" in html
+
+
+def test_run_with_empty_zotero_corpus_returns_by_default(config, monkeypatch):
+    """默认 allow_empty_corpus=false：库为空直接退出，连 arXiv 都不抓、不发信。"""
+    import smtplib
+
+    from omegaconf import open_dict
+
+    from tests.canned_responses import make_stub_openai_client, make_stub_smtp, make_stub_zotero_client
+
+    with open_dict(config):
+        config.executor.source = ["arxiv"]
+        config.executor.reranker = "api"
+        config.executor.allow_empty_corpus = False
+
+    monkeypatch.setattr(
+        "zotero_arxiv_daily.executor.zotero.Zotero", lambda *a, **kw: make_stub_zotero_client(items=[])
+    )
+    monkeypatch.setattr("zotero_arxiv_daily.executor.OpenAI", lambda **kw: make_stub_openai_client())
+    monkeypatch.setattr("zotero_arxiv_daily.reranker.api.OpenAI", lambda **kw: make_stub_openai_client())
+
+    import zotero_arxiv_daily.retriever.arxiv_retriever  # noqa: F401
+
+    from zotero_arxiv_daily.retriever.base import registered_retrievers
+
+    def should_not_be_called(self):
+        raise AssertionError("库为空且开关关闭时不应抓取论文")
+
+    monkeypatch.setattr(registered_retrievers["arxiv"], "retrieve_papers", should_not_be_called)
+
+    sent = []
+    monkeypatch.setattr(smtplib, "SMTP", make_stub_smtp(sent))
+
+    Executor(config).run()
+
+    assert sent == []
+
+
 def test_run_no_papers_send_empty_false(config, monkeypatch):
     """When no papers are found and send_empty=false, no email is sent."""
     import smtplib

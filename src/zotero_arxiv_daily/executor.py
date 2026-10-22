@@ -100,8 +100,13 @@ class Executor:
         corpus = self.fetch_zotero_corpus()
         corpus = self.filter_corpus(corpus)
         if len(corpus) == 0:
-            logger.error(f"No zotero papers found. Please check your zotero settings:\n{self.config.zotero}")
-            return
+            if not self.config.executor.get("allow_empty_corpus", False):
+                logger.error(f"No zotero papers found. Please check your zotero settings:\n{self.config.zotero}")
+                return
+            logger.warning(
+                "Zotero corpus is empty: personalized ranking is skipped and papers are sent in retrieval order. "
+                "Set executor.allow_empty_corpus=false once your library has papers."
+            )
         all_papers = []
         for source, retriever in self.retrievers.items():
             logger.info(f"Retrieving {source} papers...")
@@ -114,8 +119,11 @@ class Executor:
         logger.info(f"Total {len(all_papers)} papers retrieved from all sources")
         reranked_papers = []
         if len(all_papers) > 0:
-            logger.info("Reranking papers...")
-            reranked_papers = self.reranker.rerank(all_papers, corpus)
+            if len(corpus) > 0:
+                logger.info("Reranking papers...")
+                reranked_papers = self.reranker.rerank(all_papers, corpus)
+            else:
+                reranked_papers = list(all_papers)
             reranked_papers = reranked_papers[:self.config.executor.max_paper_num]
             if self.llm_enabled:
                 logger.info("Generating TLDR and affiliations...")

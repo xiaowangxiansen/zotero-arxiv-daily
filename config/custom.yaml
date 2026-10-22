@@ -28,3 +28,6 @@ source:
 executor:
   debug: ${oc.env:DEBUG,null}
   source: ['arxiv']
+  # Zotero 库还是空的：没有参考论文就跳个性化排序，按 arXiv 抓取顺序照发，
+  # 先把「抓取 -> 重排 -> 发信」整条链路跑通。库里攒够论文后建议改回 false。
+  allow_empty_corpus: true
