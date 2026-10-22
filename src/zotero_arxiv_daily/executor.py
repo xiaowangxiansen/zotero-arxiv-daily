@@ -38,7 +38,13 @@ class Executor:
             source: get_retriever_cls(source)(config) for source in config.executor.source
         }
         self.reranker = get_reranker_cls(config.executor.reranker)(config)
-        self.openai_client = OpenAI(api_key=config.llm.api.key, base_url=config.llm.api.base_url)
+        # llm.enabled=false 时完全不碰 LLM：不建客户端（因此也不要求 api.key），不生成 TLDR/机构
+        self.llm_enabled = bool(config.llm.get("enabled", True))
+        self.openai_client = (
+            OpenAI(api_key=config.llm.api.key, base_url=config.llm.api.base_url)
+            if self.llm_enabled
+            else None
+        )
     def fetch_zotero_corpus(self) -> list[CorpusPaper]:
         logger.info("Fetching zotero corpus")
         zot = zotero.Zotero(self.config.zotero.user_id, 'user', self.config.zotero.api_key)
@@ -111,10 +117,13 @@ class Executor:
             logger.info("Reranking papers...")
             reranked_papers = self.reranker.rerank(all_papers, corpus)
             reranked_papers = reranked_papers[:self.config.executor.max_paper_num]
-            logger.info("Generating TLDR and affiliations...")
-            for p in tqdm(reranked_papers):
-                p.generate_tldr(self.openai_client, self.config.llm)
-                p.generate_affiliations(self.openai_client, self.config.llm)
+            if self.llm_enabled:
+                logger.info("Generating TLDR and affiliations...")
+                for p in tqdm(reranked_papers):
+                    p.generate_tldr(self.openai_client, self.config.llm)
+                    p.generate_affiliations(self.openai_client, self.config.llm)
+            else:
+                logger.info("llm.enabled=false: skipping TLDR and affiliations")
         elif not self.config.executor.send_empty:
             logger.info("No new papers found. No email will be sent.")
             return

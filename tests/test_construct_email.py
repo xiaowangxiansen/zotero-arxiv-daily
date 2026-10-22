@@ -47,6 +47,16 @@ def test_render_email_no_affiliations():
     assert "Unknown Affiliation" in html
 
 
+def test_render_email_uses_abstract_when_tldr_missing():
+    # 关掉 LLM 后没有 TLDR，用摘要兜底，且不能出现字面量 None
+    paper = make_sample_paper(tldr=None, abstract="A plain abstract about widgets.", score=7.0)
+    html = render_email([paper])
+    assert "Abstract:" in html
+    assert "A plain abstract about widgets." in html
+    assert "TLDR:" not in html
+    assert ">None<" not in html
+
+
 def test_get_stars_low_score():
     assert get_stars(5.0) == ""
     assert get_stars(6.0) == ""

@@ -4,18 +4,56 @@ on:
   schedule:
     - cron: '0 22 * * *'
 
+# 定时与手动触发不并发，避免同时跑两份、发两封重复邮件
+concurrency:
+  group: send-emails-daily
+  cancel-in-progress: false
+
 jobs:
   calculate-and-send:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
     steps:
+      - name: Show checkout target
+        run: |
+          echo "repository = ${{ vars.REPOSITORY || github.repository }}"
+          echo "ref        = ${{ vars.REF || github.ref_name }}"
+          echo "triggered  = ${{ github.event_name }} on ${{ github.ref }}"
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          repository: ${{ vars.REPOSITORY }}
-          ref: ${{ vars.REF }}
+          # 未配置 REPOSITORY/REF 时回退到当前仓库与当前分支。
+          # 否则 checkout 到别的仓库，工作区里就没有你提交的 yaml，CUSTOM_CONFIG 指向的路径必然找不到。
+          repository: ${{ vars.REPOSITORY || github.repository }}
+          ref: ${{ vars.REF || github.ref_name }}
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
+
+      # CUSTOM_CONFIG 的语义（旧 workflow 只支持「整段 YAML 正文」，一旦为空就会把
+      # config/custom.yaml 清成 0 字节 → 主流程才报 MissingMandatoryValue: executor.source）：
+      #   1) 仓库内相对路径，例如 config/custom.yaml  ← 推荐
+      #   2) 整段 YAML 正文（兼容旧用法）
+      #   3) 留空 → 直接使用仓库里已提交的 config/custom.yaml
+      - name: Resolve custom config
+        env:
+          CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
+        run: bash .github/scripts/resolve_custom_config.sh
+
+      # 在下载模型/访问 Zotero 之前就把「配置没加载 / secret 漏配 / 字段类型错」拦下来
+      - name: Validate config
+        env:
+          ZOTERO_ID: ${{ secrets.ZOTERO_ID }}
+          ZOTERO_KEY: ${{ secrets.ZOTERO_KEY }}
+          SENDER: ${{ secrets.SENDER }}
+          RECEIVER: ${{ secrets.RECEIVER }}
+          SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+        run: uv run python .github/scripts/validate_config.py
 
       - name: Run script
         env:
@@ -26,9 +64,4 @@ jobs:
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
-          CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
-        run: |
-          printf "%b\n" "$CUSTOM_CONFIG" > config/custom.yaml
-          echo "Use custom config: "
-          cat config/custom.yaml
-          uv run src/zotero_arxiv_daily/main.py
+        run: uv run src/zotero_arxiv_daily/main.py

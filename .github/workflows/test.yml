@@ -2,22 +2,36 @@ name: Test
 on:
   workflow_dispatch:
 
+# 手动调试用：与 main.yml 走同一套配置解析/校验逻辑，只多打开 DEBUG
 jobs:
   calculate-and-send:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
     steps:
+      - name: Show checkout target
+        run: |
+          echo "repository = ${{ vars.REPOSITORY || github.repository }}"
+          echo "ref        = ${{ vars.REF || github.ref_name }}"
+
       - name: Checkout
         uses: actions/checkout@v6
-      #  with:
-      #    repository: ${{ vars.REPOSITORY }}
-      #    ref: ${{ vars.REF }}
+        with:
+          repository: ${{ vars.REPOSITORY || github.repository }}
+          ref: ${{ vars.REF || github.ref_name }}
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v7.1.4
+        uses: astral-sh/setup-uv@v7
 
-
-      - name: Run script
+      - name: Resolve custom config
         env:
+          CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
+        run: bash .github/scripts/resolve_custom_config.sh
+
+      - name: Validate config
+        env:
+          DEBUG: 'true'
           ZOTERO_ID: ${{ secrets.ZOTERO_ID }}
           ZOTERO_KEY: ${{ secrets.ZOTERO_KEY }}
           SENDER: ${{ secrets.SENDER }}
@@ -25,10 +39,16 @@ jobs:
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
-          CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
-        run: |
-          export DEBUG=true
-          printf "%b\n" "$CUSTOM_CONFIG" > config/custom.yaml
-          echo "Use custom config: "
-          cat config/custom.yaml
-          uv run src/zotero_arxiv_daily/main.py
+        run: uv run python .github/scripts/validate_config.py
+
+      - name: Run script
+        env:
+          DEBUG: 'true'
+          ZOTERO_ID: ${{ secrets.ZOTERO_ID }}
+          ZOTERO_KEY: ${{ secrets.ZOTERO_KEY }}
+          SENDER: ${{ secrets.SENDER }}
+          RECEIVER: ${{ secrets.RECEIVER }}
+          SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+        run: uv run src/zotero_arxiv_daily/main.py

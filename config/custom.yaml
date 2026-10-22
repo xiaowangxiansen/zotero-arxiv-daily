@@ -11,6 +11,9 @@ email:
   sender_password: ${oc.env:SENDER_PASSWORD}
 
 llm:
+  # 暂时不使用大模型：不生成 TLDR / 机构，也不需要 OPENAI_API_KEY。
+  # 以后要用时把它改成 true，并补上 OPENAI_API_KEY / OPENAI_API_BASE 两个 secret。
+  enabled: false
   api:
     key: ${oc.env:OPENAI_API_KEY}
     base_url: ${oc.env:OPENAI_API_BASE}

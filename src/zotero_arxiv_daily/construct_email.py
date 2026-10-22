@@ -52,7 +52,17 @@ def get_empty_html():
   """
   return block_template
 
-def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None):
+def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None, summary_label:str="TLDR"):
+    # 没有 TLDR 时整行不渲染，避免邮件里出现字面量 "TLDR: None"
+    summary_row = ''
+    if tldr:
+        summary_row = f"""
+    <tr>
+        <td style="font-size: 14px; color: #333; padding: 8px 0;">
+            <strong>{summary_label}:</strong> {tldr}
+        </td>
+    </tr>
+"""
     block_template = """
     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
     <tr>
@@ -72,12 +82,7 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
             <strong>Relevance:</strong> {rate}
         </td>
     </tr>
-    <tr>
-        <td style="font-size: 14px; color: #333; padding: 8px 0;">
-            <strong>TLDR:</strong> {tldr}
-        </td>
-    </tr>
-
+{summary_row}
     <tr>
         <td style="padding: 8px 0;">
             <a href="{pdf_url}" style="display: inline-block; text-decoration: none; font-size: 14px; font-weight: bold; color: #fff; background-color: #d9534f; padding: 8px 16px; border-radius: 4px;">PDF</a>
@@ -85,7 +90,7 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
     </tr>
 </table>
 """
-    return block_template.format(title=title, authors=authors,rate=rate, tldr=tldr, pdf_url=pdf_url, affiliations=affiliations)
+    return block_template.format(title=title, authors=authors, rate=rate, summary_row=summary_row, pdf_url=pdf_url, affiliations=affiliations)
 
 def get_stars(score:float):
     full_star = '<span class="full-star">⭐</span>'
@@ -102,6 +107,11 @@ def get_stars(score:float):
         full_star_num = int(star_num/2)
         half_star_num = star_num - full_star_num * 2
         return '<div class="star-wrapper">'+full_star * full_star_num + half_star * half_star_num + '</div>'
+
+
+def _shorten(text: str, limit: int = 600) -> str:
+    text = ' '.join(str(text).split())
+    return text if len(text) <= limit else text[:limit].rstrip() + '...'
 
 
 def render_email(papers:list[Paper]) -> str:
@@ -125,7 +135,14 @@ def render_email(papers:list[Paper]) -> str:
                 affiliations += ', ...'
         else:
             affiliations = 'Unknown Affiliation'
-        parts.append(get_block_html(p.title, authors, rate, p.tldr, p.pdf_url, affiliations))
+        # 有 TLDR 用 TLDR；没配 LLM 时退回摘要，保证邮件里仍有可读的一句话
+        if p.tldr:
+            summary_label, summary = 'TLDR', p.tldr
+        elif p.abstract:
+            summary_label, summary = 'Abstract', _shorten(p.abstract)
+        else:
+            summary_label, summary = 'TLDR', None
+        parts.append(get_block_html(p.title, authors, rate, summary, p.pdf_url, affiliations, summary_label))
 
     content = '<br>' + '</br><br>'.join(parts) + '</br>'
     return framework.replace('__CONTENT__', content)

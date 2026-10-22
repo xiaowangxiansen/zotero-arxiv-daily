@@ -209,6 +209,62 @@ def test_run_end_to_end(config, monkeypatch):
     assert "text/html" in email_body
 
 
+def test_run_with_llm_disabled_skips_llm(config, monkeypatch):
+    """llm.enabled=false：不建 OpenAI 客户端（即使 api.key 是 ???）、不生成 TLDR，邮件用摘要兜底。"""
+    import smtplib
+
+    from omegaconf import MISSING, open_dict
+
+    from tests.canned_responses import (
+        make_sample_paper,
+        make_stub_openai_client,
+        make_stub_smtp,
+        make_stub_zotero_client,
+    )
+
+    with open_dict(config):
+        config.llm.enabled = False
+        config.llm.api.key = MISSING  # 没配 key 也必须能跑
+        config.executor.source = ["arxiv"]
+        config.executor.reranker = "api"
+        config.executor.send_empty = False
+
+    monkeypatch.setattr("zotero_arxiv_daily.executor.zotero.Zotero", lambda *a, **kw: make_stub_zotero_client())
+
+    def forbidden_openai(**kwargs):
+        raise AssertionError("llm.enabled=false 时不应创建 OpenAI 客户端")
+
+    monkeypatch.setattr("zotero_arxiv_daily.executor.OpenAI", forbidden_openai)
+    monkeypatch.setattr("zotero_arxiv_daily.reranker.api.OpenAI", lambda **kw: make_stub_openai_client())
+
+    import zotero_arxiv_daily.retriever.arxiv_retriever  # noqa: F401
+
+    from zotero_arxiv_daily.retriever.base import registered_retrievers
+
+    monkeypatch.setattr(
+        registered_retrievers["arxiv"],
+        "retrieve_papers",
+        lambda self: [make_sample_paper(title="No-LLM Paper", abstract="An abstract about retrieval.", tldr=None)],
+    )
+
+    sent = []
+    monkeypatch.setattr(smtplib, "SMTP", make_stub_smtp(sent))
+    monkeypatch.setattr("zotero_arxiv_daily.retriever.base.sleep", lambda _: None)
+
+    executor = Executor(config)
+    assert executor.openai_client is None
+    executor.run()
+
+    assert len(sent) == 1, "即使没有 LLM，邮件也必须照常发出"
+    import email as email_lib
+
+    msg = email_lib.message_from_string(sent[0][2])
+    html = msg.get_payload(decode=True).decode("utf-8")
+    assert "No-LLM Paper" in html
+    assert "Abstract:" in html
+    assert "TLDR:" not in html
+
+
 def test_run_no_papers_send_empty_false(config, monkeypatch):
     """When no papers are found and send_empty=false, no email is sent."""
     import smtplib
