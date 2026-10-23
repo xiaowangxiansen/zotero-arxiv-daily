@@ -18,7 +18,7 @@ from pyzotero import zotero
 
 PARENT_NAME = "arXiv Daily"
 TAG = "auto-arxiv-daily"
-BATCH = 50
+BATCH = 25  # 50 条一批容易触发 30s 读超时，25 更稳
 
 
 def pdf_url_of(item: dict) -> str | None:
