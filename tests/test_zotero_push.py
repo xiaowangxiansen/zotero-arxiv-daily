@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from omegaconf import OmegaConf
 
 from tests.canned_responses import make_sample_paper
-from zotero_arxiv_daily.zotero_push import ZoteroPusher, paper_to_item, split_name
+from zotero_arxiv_daily.zotero_push import ZoteroPusher, paper_to_attachment, paper_to_item, split_name
 
 
 class FakeZotero:
@@ -15,6 +15,7 @@ class FakeZotero:
         self.collections_data = list(existing_collections or [])
         self.created_collections = []
         self.created_items = []
+        self.created_attachments = []
         self.items_by_collection = {}
         self._seq = 0
 
@@ -40,8 +41,11 @@ class FakeZotero:
     def create_items(self, items):
         if len(items) > 50:
             raise ValueError("You may only create up to 50 items per call")
-        self.created_items.extend(items)
         for item in items:
+            if item.get("itemType") == "attachment":
+                self.created_attachments.append(item)
+                continue
+            self.created_items.append(item)
             self.items_by_collection.setdefault(item["collections"][0], []).append({"data": item})
         return {"success": {str(i): f"ITEM{i}" for i in range(len(items))}, "failed": {}}
 
@@ -188,6 +192,42 @@ def test_paper_to_item_fields():
     assert item["collections"] == ["COLL"]
     assert {"tag": "auto-arxiv-daily"} in item["tags"]
     assert item["creators"][0] == {"creatorType": "author", "firstName": "Author", "lastName": "A"}
+
+
+def test_push_attaches_pdf_link_to_each_new_item():
+    """每条新条目都要挂一个 PDF 附件（linked_url，不占 Zotero 存储配额）。"""
+    client = FakeZotero()
+    papers = [
+        make_sample_paper(title="A", url="https://arxiv.org/abs/2410.11111",
+                          pdf_url="https://arxiv.org/pdf/2410.11111v1"),
+        make_sample_paper(title="B", url="https://arxiv.org/abs/2410.22222",
+                          pdf_url="https://arxiv.org/pdf/2410.22222v2"),
+    ]
+
+    ZoteroPusher(_config(), client=client).push(papers)
+
+    assert len(client.created_attachments) == 2
+    by_parent = {a["parentItem"]: a for a in client.created_attachments}
+    assert set(by_parent) == {"ITEM0", "ITEM1"}
+    first = by_parent["ITEM0"]
+    assert first["itemType"] == "attachment"
+    assert first["linkMode"] == "linked_url"
+    assert first["url"] == "https://arxiv.org/pdf/2410.11111v1"
+    assert first["contentType"] == "application/pdf"
+
+
+def test_paper_to_attachment_returns_none_without_pdf_url():
+    paper = make_sample_paper(pdf_url=None)
+    assert paper_to_attachment(paper, "PARENT") is None
+
+
+def test_paper_to_attachment_fields():
+    paper = make_sample_paper(pdf_url="https://arxiv.org/pdf/2410.33333v1")
+    attachment = paper_to_attachment(paper, "PARENT")
+
+    assert attachment["parentItem"] == "PARENT"
+    assert attachment["url"] == "https://arxiv.org/pdf/2410.33333v1"
+    assert attachment["tags"] == [{"tag": "auto-arxiv-daily"}]
 
 
 def test_split_name():

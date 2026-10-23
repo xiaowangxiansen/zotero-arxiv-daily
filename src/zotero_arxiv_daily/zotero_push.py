@@ -27,6 +27,15 @@ def _archive_id(paper) -> str:
     return (getattr(paper, "url", "") or "").rstrip("/").rsplit("/", 1)[-1]
 
 
+def _key_of(value) -> str | None:
+    """Zotero 写入返回值里一个「条目 key」可能是字符串，也可能包成 {'key': ...} / {'data': {'key': ...}}。"""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return value.get("key") or (value.get("data") or {}).get("key")
+    return None
+
+
 def _extract_key(resp) -> str | None:
     """兼容 pyzotero 不同返回形态：{'success': {'0': key}} / {'successful': {'0': {...}}} / 直接给 key。"""
     if isinstance(resp, str):
@@ -36,11 +45,7 @@ def _extract_key(resp) -> str | None:
     for field in ("success", "successful"):
         bucket = resp.get(field) or {}
         if isinstance(bucket, dict) and bucket:
-            first = next(iter(bucket.values()))
-            if isinstance(first, str):
-                return first
-            if isinstance(first, dict):
-                return first.get("key") or (first.get("data") or {}).get("key")
+            return _key_of(next(iter(bucket.values())))
     if isinstance(resp.get("key"), str):
         return resp["key"]
     return None
@@ -73,6 +78,26 @@ def paper_to_item(paper, collection_keys: str | list[str]) -> dict:
     if paper.pdf_url:
         item["extra"] = f"PDF: {paper.pdf_url}"
     return item
+
+
+def paper_to_attachment(paper, parent_key: str) -> dict | None:
+    """给条目挂一个 PDF 附件。
+
+    linkMode 用 linked_url（只存链接，不占 Zotero 存储配额）：点开直接跳 arXiv PDF。
+    改成 imported_url + upload_attachments 就是把 PDF 文件本体存进 Zotero，
+    但每天 30 篇约 60MB，免费 300MB 配额几天就满，所以默认用链接。
+    """
+    if not paper.pdf_url:
+        return None
+    return {
+        "itemType": "attachment",
+        "parentItem": parent_key,
+        "linkMode": "linked_url",
+        "title": "arXiv PDF",
+        "url": paper.pdf_url,
+        "contentType": "application/pdf",
+        "tags": [{"tag": TAG}],
+    }
 
 
 class ZoteroPusher:
@@ -163,6 +188,7 @@ class ZoteroPusher:
             return items
 
         created = 0
+        attached = 0
         attempts = 0
         while queue and attempts < MAX_ATTEMPTS:
             batch = queue[:BATCH_SIZE]
@@ -182,6 +208,7 @@ class ZoteroPusher:
             if failed:
                 logger.warning(f"Zotero rejected {len(failed)} item(s): {list(failed.values())[:3]}")
             created += len(batch) - len(failed)
+            attached += self._attach_pdfs(batch, resp)
             queue = queue[BATCH_SIZE:]
 
         if queue:
@@ -191,4 +218,30 @@ class ZoteroPusher:
             summary = ", ".join(f"{name}({len([p for p in papers if category_of(p) == name])})" for name in category_keys)
             logger.info(f"Zotero category sub-collections under {collection_name!r}: {summary}")
         logger.info(f"Pushed {created} papers to zotero collection {collection_name!r} ({collection_key})")
+        if attached:
+            logger.info(f"Attached {attached} PDF link(s) to the new items")
         return created
+
+    def _attach_pdfs(self, batch: list, resp: dict) -> int:
+        """按 create_items 返回的 key 给每条新条目挂 PDF 附件；失败只告警，不影响主流程。"""
+        success = resp.get("success") or resp.get("successful") or {}
+        attachments = []
+        for index, value in success.items():
+            key = _key_of(value)
+            if not key:
+                continue
+            try:
+                paper = batch[int(index)]
+            except (TypeError, ValueError, IndexError):
+                continue
+            attachment = paper_to_attachment(paper, key)
+            if attachment:
+                attachments.append(attachment)
+        if not attachments:
+            return 0
+        try:
+            self.client.create_items(attachments)
+        except Exception as exc:
+            logger.warning(f"Failed to attach {len(attachments)} PDF link(s): {exc}")
+            return 0
+        return len(attachments)
