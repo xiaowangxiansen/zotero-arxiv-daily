@@ -137,20 +137,47 @@ class ZoteroPusher:
         return key
 
     def _existing_keys(self, collection_key: str) -> set[str]:
-        """当天分类里已有的条目（用 archiveID / url 判定），避免同一天重跑时重复写入。"""
-        try:
-            items = self.client.everything(self.client.collection_items(collection_key))
-        except Exception as exc:
-            logger.warning(f"Failed to read existing items of collection {collection_key}: {exc}")
-            return set()
+        """全库已有条目（用 archiveID / url 判定），跨日期分类去重。
+
+        原来的实现只读「当天」那个分类，于是第二天跑的时候当天分类是空的，
+        昨天已经推过的论文会被当成新论文再推一遍 —— 这是「连着两天收到同样文章」的根因。
+        现在改为扫描整个文库的顶层条目（preprint/journalArticle 等），
+        不论它挂在哪个日期分类下，只要 archiveID 或 url 出现过就跳过。
+        """
         seen = set()
-        for item in items:
-            data = item.get("data", {})
-            if data.get("archiveID"):
-                seen.add(str(data["archiveID"]))
-            if data.get("url"):
-                seen.add(str(data["url"]).rstrip("/"))
+
+        def absorb(items):
+            for item in items:
+                data = item.get("data", {})
+                # 只收顶层文献条目；附件/笔记的 url 会把 arXiv PDF 直链带进来，
+                # 但同一篇论文的条目本身也带 url，所以按 url 判定仍然成立。
+                if data.get("itemType") in ("attachment", "note", "annotation"):
+                    continue
+                if data.get("archiveID"):
+                    seen.add(str(data["archiveID"]))
+                if data.get("url"):
+                    seen.add(str(data["url"]).rstrip("/"))
+
+        # 1) 先扫全库顶层条目：这是跨日期去重的关键
+        try:
+            absorb(self.client.everything(self.client.items()))
+        except Exception as exc:
+            logger.warning(f"Failed to read whole library for dedupe: {exc}")
+        # 2) 再补当天分类（万一上一步被限流返回不全）
+        if collection_key:
+            try:
+                absorb(self.client.everything(self.client.collection_items(collection_key)))
+            except Exception as exc:
+                logger.warning(f"Failed to read existing items of collection {collection_key}: {exc}")
         return seen
+
+    def known_archive_ids(self) -> set[str]:
+        """对外暴露「库里已有」的 ID 集合，供执行器在截断到 max_paper_num 之前先剔除旧论文。
+
+        必须「先剔除再截断」：否则每天取前 30 篇里有一半是旧的，剔除后只剩十几篇新的，
+        日志看着推送成功，用户却觉得当天收获变少。
+        """
+        return self._existing_keys("")
 
     def push(self, papers: Iterable) -> int:
         papers = list(papers)

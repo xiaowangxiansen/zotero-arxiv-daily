@@ -28,6 +28,18 @@ class FakeZotero:
     def collection_items(self, key):
         return self.items_by_collection.get(key, [])
 
+    def items(self, **kwargs):
+        """全库顶层条目：把各分类里的条目拍平（同一条目只出现一次）。"""
+        seen, out = set(), []
+        for items in self.items_by_collection.values():
+            for item in items:
+                key = item["data"].get("archiveID") or item["data"].get("title")
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(item)
+        return out
+
     def create_collections(self, payloads):
         success = {}
         for i, payload in enumerate(payloads):
@@ -148,6 +160,26 @@ def test_push_skips_papers_already_in_collection():
 
     assert pusher.push(papers) == 1
     assert pusher.push(papers) == 0
+    assert len(client.created_items) == 1
+
+
+def test_push_skips_papers_pushed_on_an_earlier_day():
+    """跨天去重：昨天推过的论文，今天再出现在抓取结果里也不能写第二次。
+
+    回归「连着两天收到同样文章」：旧实现只读当天分类，第二天分类是空的，
+    于是昨天那批被原样再推一遍。
+    """
+    client = FakeZotero()
+    pusher = ZoteroPusher(_config(), client=client)
+    yesterday = [make_sample_paper(title="P", url="https://arxiv.org/abs/2410.88888")]
+    assert pusher.push(yesterday) == 1
+
+    # 模拟第二天：新建的日期分类还没这些东西，但库里有
+    client.items_by_collection["TOMORROW"] = []
+    client.collections_data.append({"key": "C2", "data": {"name": "2026-10-24", "parentCollection": "COL1"}})
+
+    again = [make_sample_paper(title="P", url="https://arxiv.org/abs/2410.88888")]
+    assert pusher.push(again) == 0
     assert len(client.created_items) == 1
 
 
