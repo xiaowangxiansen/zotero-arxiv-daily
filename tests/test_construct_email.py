@@ -73,6 +73,33 @@ def test_get_stars_mid_score():
     assert stars.count("full-star") + stars.count("half-star") > 0
 
 
+def test_render_email_with_abstract_zh():
+    """有中文摘要翻译时，必须单独渲染一行，且标为「中文摘要」。"""
+    paper = make_sample_paper(score=7.5, tldr="A great paper.", abstract_zh="这篇论文提出了新方法。")
+    html = render_email([paper])
+    assert "中文摘要" in html
+    assert "这篇论文提出了新方法。" in html
+    # 英文 TLDR 仍应在，两者不能互相覆盖
+    assert "A great paper." in html
+
+
+def test_render_email_without_abstract_zh():
+    """翻译失败（None）时不能出现字面量 None，也不能留下空行标签。"""
+    paper = make_sample_paper(score=7.0, tldr="ok", abstract_zh=None)
+    html = render_email([paper])
+    assert "中文摘要" not in html
+    assert ">None<" not in html
+
+
+def test_render_email_abstract_zh_survives_missing_field():
+    """老 Paper（没有 abstract_zh 字段）不能让渲染崩掉。"""
+    paper = make_sample_paper(score=7.0, tldr="ok")
+    del paper.abstract_zh
+    html = render_email([paper])
+    assert "ok" in html
+    assert "中文摘要" not in html
+
+
 def test_get_block_html_contains_all_fields():
     html = get_block_html("Title", "Auth", "3.5", "Summary", "http://pdf.url", "MIT")
     assert "Title" in html
@@ -81,6 +108,12 @@ def test_get_block_html_contains_all_fields():
     assert "Summary" in html
     assert "http://pdf.url" in html
     assert "MIT" in html
+
+
+def test_get_block_html_with_abstract_zh():
+    html = get_block_html("Title", "Auth", "3.5", "Summary", "http://pdf.url", "MIT", "TLDR", "中文译文")
+    assert "摘要翻译" in html
+    assert "中文译文" in html
 
 
 def test_get_empty_html():

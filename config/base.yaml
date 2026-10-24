@@ -36,7 +36,9 @@ llm:
   # Arguments for the selected LLM API.
     max_tokens: 16384
     model: ???
-  language: English # Preferred language for the TL;DR. Example: English
+  language: English # TLDR 的输出语言。Example: English
+  translate_abstract: true # 是否额外把英文摘要翻译成中文放在邮件里。Example: true
+  target_lang: Chinese # 摘要翻译的目标语言。Example: Chinese
 
 reranker:
   local:

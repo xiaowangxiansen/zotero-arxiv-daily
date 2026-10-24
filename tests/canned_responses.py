@@ -13,6 +13,8 @@ from zotero_arxiv_daily.protocol import CorpusPaper, Paper
 _AFFILIATION_MARKER = "You are an assistant who perfectly extracts affiliations"
 _AFFILIATION_RESPONSE = '["TsingHua University","Peking University"]'
 _TLDR_RESPONSE = "Hello! How can I assist you today?"
+_ABSTRACT_ZH_RESPONSE = "这是一篇关于部件工程新方法的论文。"
+_ABSTRACT_ZH_MARKER = "Translate the abstract of an academic paper"
 
 
 def _make_chat_response(content: str) -> SimpleNamespace:
@@ -36,6 +38,8 @@ def _stub_chat_create(**kwargs):
     request_str = str(messages)
     if _AFFILIATION_MARKER in request_str:
         return _make_chat_response(_AFFILIATION_RESPONSE)
+    if _ABSTRACT_ZH_MARKER in request_str:
+        return _make_chat_response(_ABSTRACT_ZH_RESPONSE)
     return _make_chat_response(_TLDR_RESPONSE)
 
 
@@ -181,6 +185,7 @@ def make_sample_paper(**overrides) -> Paper:
         pdf_url="https://arxiv.org/pdf/2026.00001",
         full_text="\\begin{document} Some text. \\end{document}",
         tldr=None,
+        abstract_zh=None,
         affiliations=None,
         score=None,
     )

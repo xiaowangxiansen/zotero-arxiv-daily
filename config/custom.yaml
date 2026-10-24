@@ -16,15 +16,22 @@ email:
   sender_password: ${oc.env:SENDER_PASSWORD}
 
 llm:
-  # 暂时不使用大模型：不生成 TLDR / 机构，也不需要 OPENAI_API_KEY。
-  # 以后要用时把它改成 true，并补上 OPENAI_API_KEY / OPENAI_API_BASE 两个 secret。
-  enabled: false
+  # 用硅基流动的免费模型给每篇论文生成「一句话 TLDR」和「摘要中文翻译」。
+  # 两个 secret：OPENAI_API_KEY（sk-...）、OPENAI_API_BASE（https://api.siliconflow.cn/v1）
+  enabled: true
   api:
     key: ${oc.env:OPENAI_API_KEY}
     base_url: ${oc.env:OPENAI_API_BASE}
   api_mode: chat_completion
   generation_kwargs:
-    model: gpt-4o-mini
+    # Qwen/Qwen2.5-7B-Instruct 是硅基流动的免费档模型
+    model: Qwen/Qwen2.5-7B-Instruct
+  # TLDR 的输出语言：改成中文，手机上直接读
+  language: Chinese
+  # 摘要翻译成中文（设为 false 可单独关掉翻译，只保留 TLDR）
+  translate_abstract: true
+  # 摘要翻译的目标语言
+  target_lang: Chinese
 
 source:
   arxiv:

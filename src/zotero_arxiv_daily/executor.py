@@ -111,6 +111,33 @@ class Executor:
         return corpus
 
     
+    def drop_already_pushed(self, papers: list) -> list:
+        """剔除库里已存在的论文（按 arXiv ID / url），避免跨天重复推送。
+
+        只在 push.enabled 为真时生效：否则读取不到 key，无法判断「已有」。
+        读取失败时保守地原样返回 —— 宁可多推一次，也不要因为读库失败把当天空掉。
+        """
+        push_conf = self.config.zotero.get("push") or {}
+        if not bool(push_conf.get("enabled", False)):
+            return papers
+        try:
+            known = ZoteroPusher(self.config).known_archive_ids()
+        except Exception as exc:
+            logger.warning(f"Skip cross-day dedupe (cannot read library): {exc}")
+            return papers
+        if not known:
+            logger.warning("Cross-day dedupe got an empty known-set; paper list left unchanged")
+            return papers
+        kept = [
+            p for p in papers
+            if (getattr(p, "url", "") or "").rstrip("/").rsplit("/", 1)[-1] not in known
+            and (getattr(p, "url", "") or "").rstrip("/") not in known
+        ]
+        dropped = len(papers) - len(kept)
+        if dropped:
+            logger.info(f"Dropped {dropped} paper(s) already in library (cross-day dedupe), {len(kept)} left")
+        return kept
+
     def run(self):
         corpus = timed("fetch zotero corpus", self.fetch_zotero_corpus)
         corpus = timed("filter corpus", lambda: self.filter_corpus(corpus))
@@ -132,6 +159,10 @@ class Executor:
             logger.info(f"Retrieved {len(papers)} {source} papers")
             all_papers.extend(papers)
         logger.info(f"Total {len(all_papers)} papers retrieved from all sources")
+        # 先剔除「库里已经有」的论文，再排序和截断。
+        # 顺序很重要：若先截断到 max_paper_num=30 再交给 push 去重，
+        # 名额会被旧论文占满，实际入新的只有几篇，用户看到的就是「翻来覆去同样文章」。
+        all_papers = timed("drop already-pushed", lambda: self.drop_already_pushed(all_papers))
         reranked_papers = []
         if len(all_papers) > 0:
             if len(corpus) > 0:
@@ -144,9 +175,11 @@ class Executor:
                 reranked_papers = list(all_papers)
             reranked_papers = reranked_papers[:self.config.executor.max_paper_num]
             if self.llm_enabled:
-                logger.info("Generating TLDR and affiliations...")
+                logger.info("Generating TLDR, abstract translation and affiliations...")
                 for p in tqdm(reranked_papers):
                     p.generate_tldr(self.openai_client, self.config.llm)
+                    if bool(self.config.llm.get("translate_abstract", True)):
+                        p.generate_abstract_zh(self.openai_client, self.config.llm)
                     p.generate_affiliations(self.openai_client, self.config.llm)
             else:
                 logger.info("llm.enabled=false: skipping TLDR and affiliations")

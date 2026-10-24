@@ -46,6 +46,7 @@ class Paper:
     pdf_url: Optional[str] = None
     full_text: Optional[str] = None
     tldr: Optional[str] = None
+    abstract_zh: Optional[str] = None
     affiliations: Optional[list[str]] = None
     score: Optional[float] = None
     primary_category: Optional[str] = None
@@ -96,6 +97,61 @@ class Paper:
             tldr = self.abstract
             self.tldr = tldr
             return tldr
+
+    def _translate_abstract(self, openai_client:OpenAI, llm_params:dict) -> Optional[str]:
+        """把英文摘要翻译成 llm.target_lang（默认中文）。失败返回 None，不抛异常。"""
+        abstract = (self.abstract or "").strip()
+        if not abstract:
+            return None
+
+        lang = llm_params.get('target_lang', 'Chinese')
+        # 翻译任务的温度要压低，否则 LLM 会自己发挥；同时限制长度，避免把长摘要卷成论文复述
+        params = dict(llm_params)
+        params['generation_kwargs'] = dict(params.get('generation_kwargs', {}))
+        # 摘要常常几百词，max_tokens 太大会让免费额度烧得飞快，这里给一个够用的上限
+        params['generation_kwargs']['max_tokens'] = 1200
+
+        prompt = (
+            f"Translate the abstract of an academic paper into {lang}. "
+            "Output ONLY the translated abstract, no preamble.\n\n"
+            f"Abstract: {abstract}"
+        )
+        translated = _request_llm(
+            openai_client,
+            params,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You translate academic paper abstracts faithfully and concisely. "
+                        f"Preserve technical terms, numbers, citations and metric names. "
+                        f"Output only the translation in {lang}."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+        )
+        # 有的模型会在前面加说明：去掉空套路前缀，避免邮件里出现「以下是翻译：」
+        if translated:
+            translated = translated.strip()
+            cleaned = re.sub(
+                r'^(Here is the translation|Translation|译文|翻译)[:：]?\s*',
+                '',
+                translated,
+                flags=re.IGNORECASE,
+            )
+            return cleaned.strip() or translated
+        return None
+
+    def generate_abstract_zh(self, openai_client:OpenAI, llm_params:dict) -> Optional[str]:
+        try:
+            translated = self._translate_abstract(openai_client, llm_params)
+            self.abstract_zh = translated
+            return translated
+        except Exception as e:
+            logger.warning(f"Failed to translate abstract of {self.url}: {e}")
+            self.abstract_zh = None
+            return None
 
     def _generate_affiliations_with_llm(self, openai_client:OpenAI,llm_params:dict) -> Optional[list[str]]:
         if self.full_text is not None:

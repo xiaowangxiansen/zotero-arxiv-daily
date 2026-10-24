@@ -52,7 +52,7 @@ def get_empty_html():
   """
   return block_template
 
-def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None, summary_label:str="TLDR"):
+def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None, summary_label:str="TLDR", abstract_zh:str=None, abstract_zh_label:str="摘要翻译"):
     # 没有 TLDR 时整行不渲染，避免邮件里出现字面量 "TLDR: None"
     summary_row = ''
     if tldr:
@@ -60,6 +60,16 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
     <tr>
         <td style="font-size: 14px; color: #333; padding: 8px 0;">
             <strong>{summary_label}:</strong> {tldr}
+        </td>
+    </tr>
+"""
+    # 中文摘要翻译：作为独立一行跟在 TLDR 后面，同样允许整体缺失
+    abstract_zh_row = ''
+    if abstract_zh:
+        abstract_zh_row = f"""
+    <tr>
+        <td style="font-size: 14px; color: #333; padding: 8px 0; background-color: #f0f7ff; border-left: 3px solid #337ab7; padding-left: 10px;">
+            <strong>{abstract_zh_label}:</strong> {abstract_zh}
         </td>
     </tr>
 """
@@ -82,7 +92,7 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
             <strong>Relevance:</strong> {rate}
         </td>
     </tr>
-{summary_row}
+{summary_row}{abstract_zh_row}
     <tr>
         <td style="padding: 8px 0;">
             <a href="{pdf_url}" style="display: inline-block; text-decoration: none; font-size: 14px; font-weight: bold; color: #fff; background-color: #d9534f; padding: 8px 16px; border-radius: 4px;">PDF</a>
@@ -90,7 +100,7 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
     </tr>
 </table>
 """
-    return block_template.format(title=title, authors=authors, rate=rate, summary_row=summary_row, pdf_url=pdf_url, affiliations=affiliations)
+    return block_template.format(title=title, authors=authors, rate=rate, abstract_zh_row=abstract_zh_row, summary_row=summary_row, pdf_url=pdf_url, affiliations=affiliations)
 
 def get_stars(score:float):
     full_star = '<span class="full-star">⭐</span>'
@@ -142,7 +152,13 @@ def render_email(papers:list[Paper]) -> str:
             summary_label, summary = 'Abstract', _shorten(p.abstract)
         else:
             summary_label, summary = 'TLDR', None
-        parts.append(get_block_html(p.title, authors, rate, summary, p.pdf_url, affiliations, summary_label))
+        # 中文摘要翻译：由 protocol.Paper.generate_abstract_zh 生成，失败时为 None
+        abstract_zh = getattr(p, "abstract_zh", None)
+        if abstract_zh:
+            abstract_zh_label = "中文摘要"
+        else:
+            abstract_zh_label = "摘要翻译"
+        parts.append(get_block_html(p.title, authors, rate, summary, p.pdf_url, affiliations, summary_label, abstract_zh, abstract_zh_label))
 
     content = '<br>' + '</br><br>'.join(parts) + '</br>'
     return framework.replace('__CONTENT__', content)

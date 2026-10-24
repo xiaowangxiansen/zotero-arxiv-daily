@@ -86,6 +86,107 @@ def test_invalid_api_mode_falls_back_to_abstract(llm_params):
 
 
 # ---------------------------------------------------------------------------
+# generate_abstract_zh
+# ---------------------------------------------------------------------------
+
+
+def test_abstract_zh_returns_translation(llm_params):
+    llm_params["target_lang"] = "Chinese"
+    client = make_stub_openai_client()
+    paper = make_sample_paper()
+    result = paper.generate_abstract_zh(client, llm_params)
+    assert result == "这是一篇关于部件工程新方法的论文。"
+    assert paper.abstract_zh == result
+
+
+def test_abstract_zh_none_without_abstract(llm_params):
+    client = make_stub_openai_client()
+    paper = make_sample_paper(abstract="")
+    assert paper.generate_abstract_zh(client, llm_params) is None
+    assert paper.abstract_zh is None
+
+
+def test_abstract_zh_falls_back_to_none_on_error(llm_params):
+    from types import SimpleNamespace
+
+    broken_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **kw: (_ for _ in ()).throw(RuntimeError("429 rate limited")))
+        )
+    )
+    paper = make_sample_paper()
+    assert paper.generate_abstract_zh(broken_client, llm_params) is None
+    assert paper.abstract_zh is None
+    # 翻译失败不能污染其它字段
+    assert paper.tldr is None
+
+
+def test_abstract_zh_strips_preamble(llm_params):
+    from types import SimpleNamespace
+
+    def create_with_preamble(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Here is the translation: 这是译文正文。"),
+                )
+            ]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_with_preamble))
+    )
+    paper = make_sample_paper()
+    result = paper.generate_abstract_zh(client, llm_params)
+    assert result == "这是译文正文。"
+    assert "Here is the translation" not in result
+
+
+def test_abstract_zh_defaults_to_chinese_when_unset():
+    """未配 target_lang 时也应默认译成中文，而不是报 KeyError。"""
+    from types import SimpleNamespace
+
+    captured = {}
+
+    def create_capture(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="译文"))]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_capture))
+    )
+    paper = make_sample_paper()
+    result = paper.generate_abstract_zh(client, {"api_mode": "chat_completion"})
+    assert result == "译文"
+    assert "Chinese" in str(captured.get("messages", []))
+
+
+def test_abstract_zh_caps_max_tokens(llm_params):
+    """翻译任务必须压低 max_tokens，否则长摘要会把免费额度烧穿。"""
+    from types import SimpleNamespace
+
+    captured = {}
+
+    def create_capture(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="译文"))]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_capture))
+    )
+    llm_params["generation_kwargs"] = {"model": "gpt-4o-mini", "max_tokens": 16384}
+    paper = make_sample_paper()
+    paper.generate_abstract_zh(client, llm_params)
+    assert captured["max_tokens"] == 1200
+    # 不能污染调用方传进来的 config
+    assert llm_params["generation_kwargs"]["max_tokens"] == 16384
+
+
+# ---------------------------------------------------------------------------
 # generate_affiliations
 # ---------------------------------------------------------------------------
 

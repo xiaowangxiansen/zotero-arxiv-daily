@@ -50,6 +50,7 @@ def _paper_to_dict(index: int, paper: "Paper") -> dict:
         "authors": list(paper.authors),
         "abstract": paper.abstract,
         "tldr": paper.tldr,
+        "abstract_zh": getattr(paper, "abstract_zh", None),
         "url": paper.url,
         "pdf_url": paper.pdf_url,
         "score": paper.score,
@@ -73,6 +74,9 @@ def _paper_to_markdown(index: int, paper: "Paper") -> str:
     lines.append("")
     if paper.tldr:
         lines += [f"**TLDR**：{paper.tldr}", ""]
+    abstract_zh = getattr(paper, "abstract_zh", None)
+    if abstract_zh:
+        lines += [f"**中文摘要**：{abstract_zh}", ""]
     if paper.abstract:
         lines += ["**摘要**：", "", paper.abstract.strip(), ""]
     return "\n".join(lines)
